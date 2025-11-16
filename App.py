@@ -8,6 +8,103 @@ from langchain.agents import create_react_agent
 from langchain.agents import AgentExecutor
 from ferramentas import criar_ferramentas
 
+# Função para detectar a linha de cabeçalho
+def detectar_linha_cabecalho(df_raw: pd.DataFrame, max_linhas: int = 15) -> int:
+    """
+    Heurística simples para encontrar a linha de cabeçalho.
+    Procura, nas primeiras `max_linhas`, a linha com:
+    - mais valores de texto,
+    - menos números,
+    - menos vazios,
+    - valores mais únicos.
+    """
+    subset = df_raw.head(max_linhas)
+
+    melhor_idx = 0
+    melhor_score = -1
+
+    for idx, row in subset.iterrows():
+        valores = row.astype(str)
+
+        num_cols = len(valores)
+        if num_cols == 0:
+            continue
+
+        # Normaliza
+        valores_norm = [v.strip() for v in valores]
+
+        # Métricas
+        num_vazios = sum(v == "" for v in valores_norm)
+        num_unicos = len(set(v.lower() for v in valores_norm if v != ""))
+
+        num_numericos = 0
+        for v in valores_norm:
+            if v == "":
+                continue
+            v_num = v.replace(",", ".")
+            try:
+                float(v_num)
+                num_numericos += 1
+            except ValueError:
+                pass
+
+        # Score: linha boa de cabeçalho tende a ter
+        # muitos únicos, poucos numéricos, poucos vazios
+        score = (
+            (num_unicos / num_cols)
+            - (num_numericos / num_cols)
+            - (num_vazios / num_cols)
+        )
+
+        if score > melhor_score:
+            melhor_score = score
+            melhor_idx = idx
+
+    return melhor_idx
+
+
+def carregar_csv_flexivel(arquivo) -> pd.DataFrame:
+    """
+    Lê CSV:
+    - detecta separador automaticamente
+    - ignora linhas quebradas
+    - tenta detectar linha de cabeçalho que não está na 1ª linha
+    """
+    # 1) Ler tudo sem cabeçalho
+    try:
+        df_raw = pd.read_csv(
+            arquivo,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            header=None,
+        )
+    except UnicodeDecodeError:
+        # Tenta novamente com latin1 (comum em sistemas legados)
+        arquivo.seek(0)
+        df_raw = pd.read_csv(
+            arquivo,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            header=None,
+            encoding="latin1",
+        )
+
+    if df_raw.empty:
+        raise ValueError("Arquivo CSV sem dados.")
+
+    # 2) Detectar a linha de cabeçalho
+    header_idx = detectar_linha_cabecalho(df_raw)
+
+    # 3) Usar essa linha como cabeçalho e remover as linhas anteriores
+    colunas = df_raw.iloc[header_idx].astype(str).str.strip().tolist()
+    df = df_raw[(header_idx + 1):].copy()
+    df.columns = colunas
+    df = df.reset_index(drop=True)
+
+    return df
+
 # Inicia o app
 st.set_page_config(page_title="Assistente de análise de dados com IA", layout="centered")
 st.title("🦜 Assistente de análise de dados com IA")
@@ -36,39 +133,18 @@ df = None  # inicializa
 
 if arquivo_carregado is not None:
     try:
-        # Tentativa mais robusta:
-        # - sep=None + engine="python" -> pandas tenta detectar o separador
-        # - on_bad_lines="skip" -> pula linhas quebradas ao invés de lançar erro
-        df = pd.read_csv(
-            arquivo_carregado,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip"
-        )
+        df = carregar_csv_flexivel(arquivo_carregado)
     except ParserError as e:
-        st.error("Não foi possível ler o arquivo CSV (erro de formatação). "
-                 "Verifique se o arquivo está bem formatado ou tente limpar linhas problemáticas.")
+        st.error("Não foi possível ler o arquivo CSV (erro de parsing).")
         st.text(f"Detalhes técnicos: {e}")
         st.stop()
-    except UnicodeDecodeError as e:
-        # Caso seja um CSV em latin1 (muito comum em arquivos do SUS / sistemas legados)
-        arquivo_carregado.seek(0)
-        try:
-            df = pd.read_csv(
-                arquivo_carregado,
-                sep=None,
-                engine="python",
-                on_bad_lines="skip",
-                encoding="latin1"
-            )
-        except Exception as e2:
-            st.error("Erro ao tentar ler o arquivo com encoding latin1.")
-            st.text(f"Detalhes técnicos: {e2}")
-            st.stop()
+    except Exception as e:
+        st.error("Erro ao carregar o arquivo CSV.")
+        st.text(f"Detalhes técnicos: {e}")
+        st.stop()
 
-    if df is not None:
-        st.success(f"Arquivo carregado com sucesso! Formato: {df.shape[0]} linhas x {df.shape[1]} colunas")
-        st.dataframe(df.head())
+    st.success(f"Arquivo carregado com sucesso! Formato: {df.shape[0]} linhas x {df.shape[1]} colunas")
+    st.dataframe(df.head())
 
     # LLM
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -186,6 +262,7 @@ if arquivo_carregado is not None:
     if st.button("Gerar gráfico", key="gerar_grafico"):
         with st.spinner("Gerando o gráfico 🦜"):
             orquestrador.invoke({"input": pergunta_grafico})
+
 
 
 

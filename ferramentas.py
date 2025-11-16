@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
+import re
 from langchain.agents import Tool
 from langchain_experimental.tools import PythonAstREPLTool
 
@@ -231,6 +232,7 @@ def gerar_grafico(pergunta: str, df: pd.DataFrame) -> str:
             8. Mantenha os ticks eixo X sem rotação com `plt.xticks(rotation=0)`
             9. Remova as bordas superior e direita do gráfico com `sns.despine()`.
             10. Finalize o código com `plt.show()`.
+            11. Plote sempre o conjunto completo dos dados agregados. Não restrinja a visualização a um subconjunto de dados (usando .head(), .tail(), .sample() ou fatiamento [:N]).
 
             Retorne APENAS o código Python, sem nenhum texto adicional ou explicação.
 
@@ -247,7 +249,16 @@ def gerar_grafico(pergunta: str, df: pd.DataFrame) -> str:
         })
 
         # Limpa o código gerado
+    #codigo_limpo = codigo_bruto.replace("```python", "").replace("```", "").strip()
     codigo_limpo = codigo_bruto.replace("```python", "").replace("```", "").strip()
+
+    # Remover limitações de amostra que o modelo possa ter colocado
+    # (head, tail, sample, fatiamento [:N])
+    codigo_limpo = re.sub(r"\.head\s*\(\s*\d*\s*\)", "", codigo_limpo)
+    codigo_limpo = re.sub(r"\.tail\s*\(\s*\d*\s*\)", "", codigo_limpo)
+    codigo_limpo = re.sub(r"\.sample\s*\([^)]*\)", "", codigo_limpo)
+    codigo_limpo = re.sub(r"\[\s*:\s*\d+\s*\]", "", codigo_limpo)
+
 
         # Tenta executar o código para validação
     exec_globals = {'df': df, 'plt': plt, 'sns': sns}
@@ -302,6 +313,7 @@ def criar_ferramentas(df):
         ferramenta_codigos_python
 
     ]
+
 
 
 

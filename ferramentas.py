@@ -92,44 +92,60 @@ def informacoes_dataframe(pergunta: str, df: pd.DataFrame) -> str:
 @tool
 def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
     """
-    Utilize esta ferramenta sempre que o usuário solicitar um resumo estatístico completo e descritivo da base de dados,
-    incluindo várias estatísticas (média, desvio padrão, mínimo, máximo etc.).
-    Não utilize esta ferramenta para calcular uma única métrica como 'qual é a média de X' ou 'qual a correlação das variáveis'.
+    Gera um resumo estatístico das colunas numéricas do DataFrame.
+    Tenta:
+    1) Usar colunas já numéricas;
+    2) Detectar e converter automaticamente colunas que parecem numéricas.
     """
-    # Coleta de estatísticas descritivas
-    estatisticas_descritivas = df.describe(include='number').transpose().to_string()
-    
-    # Prompt de resposta
-    template_resposta = PromptTemplate(
-        template="""
-        Você é um analista de dados encarregado de interpretar resultados estatísticos de uma base de dados
-        a partir de uma {pergunta} feita pelo usuário.
 
-        A seguir, você encontrará as estatísticas descritivas da base de dados:
+    # 1) Colunas que já são numéricas
+    df_num = df.select_dtypes(include="number")
 
-        ================= ESTATÍSTICAS DESCRITIVAS =================
+    # 2) Se não houver colunas numéricas, tentar converter automaticamente
+    if df_num.empty:
+        possiveis_numericas = {}
 
-        {resumo}
+        for col in df.columns:
+            serie_original = df[col]
 
-        ============================================================
+            # Converte para string e normaliza:
+            # - remove espaços
+            # - remove separador de milhar "."
+            # - troca vírgula decimal "," por ponto "."
+            serie = (
+                serie_original.astype(str)
+                .str.strip()
+                .str.replace(".", "", regex=False)
+                .str.replace(",", ".", regex=False)
+            )
 
-        Com base nesses dados, elabore um resumo explicativo com linguagem clara, acessível e fluida, destacando
-        os principais pontos dos resultados. Inclua:
+            conv = pd.to_numeric(serie, errors="coerce")
 
-        1. Um título: ## Relatório de estatísticas descritivas
-        2. Uma visão geral das estatísticas das colunas numéricas
-        3. Um paráfrago sobre cada uma das colunas, comentando informações sobre seus valores.
-        4. Identificação de possíveis outliers com base nos valores mínimo e máximo
-        5. Recomendações de próximos passos na análise com base nos padrões identificados
-        """,
-        input_variables=["pergunta", "resumo"]
+            # Se pelo menos 50% dos valores viram número, consideramos a coluna numérica
+            if conv.notna().mean() >= 0.5:
+                possiveis_numericas[col] = conv
+
+        if possiveis_numericas:
+            df_num = pd.DataFrame(possiveis_numericas)
+
+    # 3) Se ainda assim não tiver colunas numéricas, devolve mensagem amigável
+    if df_num.empty:
+        return (
+            "Não foi possível gerar estatísticas descritivas numéricas, "
+            "porque nenhuma coluna foi identificada como numérica neste arquivo. "
+            "Verifique se as colunas de quantidade/valor estão realmente em formato numérico "
+            "ou se vêm como texto com vírgula, ponto, etc."
+        )
+
+    # 4) Agora sim, gera o describe com segurança
+    estatisticas_descritivas = df_num.describe().transpose().to_string()
+
+    resposta = (
+        "Segue o resumo estatístico das colunas numéricas identificadas no dataset:\n\n"
+        f"{estatisticas_descritivas}"
     )
-
-    cadeia = template_resposta | llm | StrOutputParser()
-
-    resposta = cadeia.invoke({"pergunta": pergunta, "resumo": estatisticas_descritivas})
-
     return resposta
+
 
 # Gerador de gráficos 
 @tool
@@ -245,3 +261,4 @@ def criar_ferramentas(df):
         ferramenta_codigos_python
 
     ]
+

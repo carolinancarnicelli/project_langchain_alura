@@ -9,58 +9,50 @@ from langchain.agents import AgentExecutor
 from ferramentas import criar_ferramentas
 
 # Função para detectar a linha de cabeçalho
-def detectar_linha_cabecalho(df_raw: pd.DataFrame, max_linhas: int = 15) -> int:
+def detectar_linha_cabecalho(df_raw: pd.DataFrame, max_linhas: int = 30) -> int:
     """
-    Heurística simples para encontrar a linha de cabeçalho.
-    Procura, nas primeiras `max_linhas`, a linha com:
-    - mais valores de texto,
-    - menos números,
-    - menos vazios,
-    - valores mais únicos.
+    Detecta a linha de cabeçalho usando duas regras:
+
+    Regra 1: primeira linha (entre as 'max_linhas' primeiras)
+             em que TODAS as colunas estão preenchidas (não vazias).
+    Regra 2: se não existir linha totalmente preenchida,
+             escolhe a linha com MAIOR número de colunas não vazias,
+             desde que seja >= 60% do total de colunas.
+
+    Se nada satisfizer, volta para a primeira linha do subset.
     """
+    if df_raw.empty:
+        return 0
+
+    total_cols = df_raw.shape[1]
     subset = df_raw.head(max_linhas)
 
-    melhor_idx = 0
-    melhor_score = -1
+    candidatos = []
 
     for idx, row in subset.iterrows():
-        valores = row.astype(str)
+        valores = row.astype(str).str.strip()
 
-        num_cols = len(valores)
-        if num_cols == 0:
-            continue
+        # Considera vazio: "", "nan", "none"
+        mask_nao_vazio = ~valores.isin(["", "nan", "NaN", "NONE", "None"])
+        qtd_nao_vazios = mask_nao_vazio.sum()
 
-        # Normaliza
-        valores_norm = [v.strip() for v in valores]
+        # Guarda para regra 2
+        candidatos.append((idx, qtd_nao_vazios))
 
-        # Métricas
-        num_vazios = sum(v == "" for v in valores_norm)
-        num_unicos = len(set(v.lower() for v in valores_norm if v != ""))
+        # REGRA 1: primeira linha com TODAS as colunas preenchidas
+        if qtd_nao_vazios == total_cols:
+            return idx
 
-        num_numericos = 0
-        for v in valores_norm:
-            if v == "":
-                continue
-            v_num = v.replace(",", ".")
-            try:
-                float(v_num)
-                num_numericos += 1
-            except ValueError:
-                pass
+    # REGRA 2: linha com maior número de colunas não vazias
+    melhor_idx, melhor_qtd = max(candidatos, key=lambda x: x[1])
 
-        # Score: linha boa de cabeçalho tende a ter
-        # muitos únicos, poucos numéricos, poucos vazios
-        score = (
-            (num_unicos / num_cols)
-            - (num_numericos / num_cols)
-            - (num_vazios / num_cols)
-        )
+    # exige pelo menos 60% das colunas preenchidas
+    if melhor_qtd >= int(0.6 * total_cols):
+        return melhor_idx
 
-        if score > melhor_score:
-            melhor_score = score
-            melhor_idx = idx
+    # fallback: primeira linha do subset
+    return subset.index[0]
 
-    return melhor_idx
 
 
 def carregar_csv_flexivel(arquivo) -> pd.DataFrame:
@@ -68,7 +60,7 @@ def carregar_csv_flexivel(arquivo) -> pd.DataFrame:
     Lê CSV:
     - detecta separador automaticamente
     - ignora linhas quebradas
-    - tenta detectar linha de cabeçalho que não está na 1ª linha
+    - detecta linha de cabeçalho que pode NÃO estar na 1ª linha
     """
     # 1) Ler tudo sem cabeçalho
     try:
@@ -94,7 +86,7 @@ def carregar_csv_flexivel(arquivo) -> pd.DataFrame:
     if df_raw.empty:
         raise ValueError("Arquivo CSV sem dados.")
 
-    # 2) Detectar a linha de cabeçalho
+    # 2) Detectar a linha de cabeçalho com a nova função
     header_idx = detectar_linha_cabecalho(df_raw)
 
     # 3) Usar essa linha como cabeçalho e remover as linhas anteriores
@@ -104,6 +96,7 @@ def carregar_csv_flexivel(arquivo) -> pd.DataFrame:
     df = df.reset_index(drop=True)
 
     return df
+
 
 # Inicia o app
 st.set_page_config(page_title="Assistente de análise de dados com IA", layout="centered")
@@ -262,6 +255,7 @@ if arquivo_carregado is not None:
     if st.button("Gerar gráfico", key="gerar_grafico"):
         with st.spinner("Gerando o gráfico 🦜"):
             orquestrador.invoke({"input": pergunta_grafico})
+
 
 
 

@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
 import os
-from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
-from langchain.agents import create_react_agent
-from langchain.agents import AgentExecutor
-from ferramentas import criar_ferramentas
+from langchain.agents import create_react_agent, AgentExecutor
+from ferramentas import criar_ferramentas, llm   # <– REUSAR o llm global
+
 
 # Inicia o app
 st.set_page_config(page_title="Assistente de análise de dados com IA", layout="centered")
@@ -37,20 +36,14 @@ if arquivo_carregado:
     st.markdown("### 🔍 Primeiras linhas do DataFrame")
     st.dataframe(df.head())
 
-    # LLM
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    llm = ChatGroq(
-        api_key=GROQ_API_KEY,
-        model_name="llama-3.1-8b-instant",  # modelo menor e mais barato
-        max_tokens=512,
-        temperature=0,
-    )
-
     # Ferramentas
     tools = criar_ferramentas(df)
 
     # Prompt ReAct (em português), com regra para NÃO repetir ferramenta
-    df_head = df.head().to_markdown(index=False)
+    #df_head = df.head().to_markdown(index=False)
+    df_sample = df.iloc[:5, :10]  # 5 linhas, 10 colunas
+    df_head = df_sample.to_markdown(index=False)
+
 
     prompt_react_pt = PromptTemplate(
         input_variables=["input", "agent_scratchpad", "tools", "tool_names"],
@@ -83,6 +76,10 @@ REGRA IMPORTANTE:
 - Em vez disso, faça:
   Thought: Agora eu sei a resposta final  
   Final Answer: <explique a resposta em português usando o resultado das ferramentas>
+- Para perguntas de RELATÓRIO GERAL use SOMENTE a ferramenta "Informações DataFrame" UMA vez.
+- Para perguntas de ESTATÍSTICAS DESCRITIVAS use SOMENTE a ferramenta "Resumo Estatístico" UMA vez.
+- Para perguntas específicas que envolvem código Python (média, soma, filtro, etc.), use a ferramenta "Códigos Python".
+- NÃO chame a mesma ferramenta mais de uma vez na mesma pergunta.
 
 A resposta final SEMPRE deve aparecer no formato:
 
@@ -110,11 +107,14 @@ Thought: {agent_scratchpad}"""
     st.markdown("---")
     st.markdown("## ⚡ Ações rápidas")
 
-    # Relatório de informações gerais
+    # Relatório de informações gerais (SEM agente)
     if st.button("📄 Relatório de informações gerais", key="botao_relatorio_geral"):
         with st.spinner("Gerando relatório 🦜"):
-            resposta = orquestrador.invoke({"input": "Quero um relatório com informações sobre os dados"})
-            st.session_state['relatorio_geral'] = resposta["output"]
+            texto_relatorio = informacoes_dataframe.run(
+                {"pergunta": "Quero um relatório com informações sobre os dados", "df": df}
+            )
+            st.session_state['relatorio_geral'] = texto_relatorio
+
 
     # Exibe o relatório com botão de download
     if 'relatorio_geral' in st.session_state:
@@ -128,11 +128,14 @@ Thought: {agent_scratchpad}"""
                 mime="text/markdown"
             )
 
-    # Relatório de estatísticas descritivas
+    # Relatório de estatísticas descritivas (SEM agente)
     if st.button("📄 Relatório de estatísticas descritivas", key="botao_relatorio_estatisticas"):
         with st.spinner("Gerando relatório 🦜"):
-            resposta = orquestrador.invoke({"input": "Quero um relatório de estatísticas descritivas"})
-            st.session_state['relatorio_estatisticas'] = resposta["output"]
+            texto_relatorio = resumo_estatistico.run(
+                {"pergunta": "Quero um relatório de estatísticas descritivas", "df": df}
+            )
+            st.session_state['relatorio_estatisticas'] = texto_relatorio
+
 
     # Exibe o relatório salvo com opção de download
     if 'relatorio_estatisticas' in st.session_state:

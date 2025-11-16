@@ -100,7 +100,7 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
     # 1) Colunas que já são numéricas
     df_num = df.select_dtypes(include="number")
 
-    # 2) Tentar converter automaticamente colunas que parecem numéricas
+    # 2) Tentar converter automaticamente colunas que parecem numéricas (números como texto)
     possiveis_numericas = {}
 
     for col in df.columns:
@@ -120,14 +120,13 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
 
         conv = pd.to_numeric(serie, errors="coerce")
 
-        # QUALQUER coluna que tenha ao menos 1 valor numérico entra
+        # qualquer coluna com pelo menos 1 valor numérico entra
         if conv.notna().sum() > 0:
             possiveis_numericas[col] = conv
 
     # Se encontramos colunas convertidas, adiciona ao df_num
     if possiveis_numericas:
         df_convertidas = pd.DataFrame(possiveis_numericas)
-        # concatena mantendo todas as numéricas
         if not df_num.empty:
             df_num = pd.concat([df_num, df_convertidas], axis=1)
         else:
@@ -142,8 +141,15 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
             "ou se vêm como texto com vírgula, ponto etc."
         )
 
-    # 4) Agora sim, gera o describe com segurança
-    estatisticas_descritivas = df_num.describe().transpose().to_string()
+    # 4) Gera o describe com segurança (e ainda captura qualquer ValueError residual)
+    try:
+        estatisticas_descritivas = df_num.describe().transpose().to_string()
+    except ValueError as e:
+        return (
+            "Ocorreu um erro ao gerar as estatísticas descritivas numéricas "
+            f"(detalhe técnico: {e}). Isso geralmente acontece quando não há "
+            "dados numéricos suficientes após o tratamento."
+        )
 
     # 5) Prompt de resposta (mantém o mesmo template da aula)
     template_resposta = PromptTemplate(
@@ -180,7 +186,6 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
     )
 
     return resposta
-
 
 
 # Gerador de gráficos 
@@ -297,5 +302,6 @@ def criar_ferramentas(df):
         ferramenta_codigos_python
 
     ]
+
 
 

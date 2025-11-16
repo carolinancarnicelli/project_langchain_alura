@@ -18,9 +18,10 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Configurações do LLM
 llm = ChatGroq(
     api_key=GROQ_API_KEY,
-    model_name="llama3-70b-8192",
+    model_name="llama-3.3-70b-versatile",
     temperature=0
 )
+
 
 # Relatório informações
 @tool
@@ -242,4 +243,5 @@ def criar_ferramentas(df):
         ferramenta_resumo_estatistico, 
         ferramenta_gerar_grafico,
         ferramenta_codigos_python
+
     ]

@@ -1,58 +1,33 @@
 # ferramentas.py
 
-import os
-from dotenv import load_dotenv
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 import streamlit as st
 
-from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain.agents import Tool
 from langchain_experimental.tools import PythonAstREPLTool
 
-# ---------------------------------------------------------
-# 1) LLM único (serve tanto para as ferramentas quanto para o agente)
-# ---------------------------------------------------------
-load_dotenv()
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", None)
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY não encontrada. Configure no .env ou em secrets do Streamlit.")
-
-llm = ChatGroq(
-    api_key=GROQ_API_KEY,
-    model_name="llama-3.1-8b-instant",  # modelo menor e mais rápido
-    max_tokens=512,
-    temperature=0,
-)
-
-# Parser de saída em texto puro
 parser = StrOutputParser()
 
 
-# ---------------------------------------------------------
-# 2) Função auxiliar para criar cadeias LLM → texto
-# ---------------------------------------------------------
-def criar_cadeia_resposta(template: str):
+def criar_cadeia_resposta(template: str, llm):
+    """Cria uma cadeia simples: PromptTemplate -> LLM -> StrOutputParser."""
     prompt = PromptTemplate(
         template=template,
-        input_variables=["pergunta", "conteudo"]
+        input_variables=["pergunta", "conteudo"],
     )
     return prompt | llm | parser
 
 
-# ---------------------------------------------------------
-# 3) Fábrica de ferramentas, com DF em closure
-# ---------------------------------------------------------
-def criar_ferramentas(df: pd.DataFrame):
+def criar_ferramentas(df: pd.DataFrame, llm):
     """
-    Cria as ferramentas ligadas ao DataFrame df e as retorna como uma lista de Tool.
+    Cria as ferramentas ligadas ao DataFrame df e ao LLM informado.
+    Retorna uma lista de Tool (para ser usada no agente e nas ações rápidas).
     """
 
-    # Para reduzir tokens, usamos apenas uma amostra (5 linhas x 10 colunas)
+    # Amostra pequena para evitar prompt gigante
     df_sample = df.iloc[:5, : min(df.shape[1], 10)]
     df_head = df_sample.to_markdown(index=False)
 
@@ -64,11 +39,10 @@ def criar_ferramentas(df: pd.DataFrame):
     {df.dtypes.to_string()}
     """
 
-    # =========================
-    # 3.1 – Ferramenta: Informações gerais
-    # =========================
-    cadeia_info = criar_cadeia_resposta(
-        """
+    # ======================================================
+    # 1) Ferramenta: Informações gerais do DataFrame
+    # ======================================================
+    template_info = """
 Você é um analista de dados encarregado de gerar um RELATÓRIO GERAL
 sobre uma base de dados, a partir da seguinte pergunta do usuário:
 
@@ -76,8 +50,8 @@ Pergunta: {pergunta}
 
 A seguir estão informações sobre a base de dados:
 
-AMOSTRA (head):
-=============
+INFORMAÇÕES BÁSICAS:
+====================
 {conteudo}
 
 Responda em português, de forma organizada, com seções como:
@@ -88,7 +62,7 @@ Responda em português, de forma organizada, com seções como:
 
 Não invente colunas ou informações que não existam.
 """
-    )
+    cadeia_info = criar_cadeia_resposta(template_info, llm)
 
     def _informacoes_dataframe(pergunta: str) -> str:
         conteudo = f"{info_basica}\n\nHead do DataFrame:\n{df_head}"
@@ -103,16 +77,15 @@ Não invente colunas ou informações que não existam.
         ),
     )
 
-    # =========================
-    # 3.2 – Ferramenta: Resumo estatístico
-    # =========================
+    # ======================================================
+    # 2) Ferramenta: Resumo estatístico
+    # ======================================================
     try:
         estatisticas_descritivas = df.describe(include="number").transpose().to_string()
     except Exception as e:
         estatisticas_descritivas = f"Não foi possível calcular describe(): {e}"
 
-    cadeia_estatisticas = criar_cadeia_resposta(
-        """
+    template_est = """
 Você é um analista de dados encarregado de interpretar ESTATÍSTICAS DESCRITIVAS
 de uma base de dados, a partir da seguinte pergunta do usuário:
 
@@ -132,7 +105,7 @@ Explique, em português e de forma didática:
 
 Não invente medidas que não estejam na tabela.
 """
-    )
+    cadeia_estatisticas = criar_cadeia_resposta(template_est, llm)
 
     def _resumo_estatistico(pergunta: str) -> str:
         conteudo = estatisticas_descritivas
@@ -147,29 +120,51 @@ Não invente medidas que não estejam na tabela.
         ),
     )
 
-    # =========================
-    # 3.3 – Ferramenta: Geração de gráfico (versão simples)
-    # =========================
+    # ======================================================
+    # 3) Ferramenta: Gerar gráfico
+    # ======================================================
     def _gerar_grafico(pergunta: str) -> str:
         """
-        Implementação simplificada:
-        - Espera frases do tipo: 'Gráfico de barras de tempo_entrega por clima'
-        - Você pode ir refinando depois conforme a necessidade.
-        """
-        # Exemplo didático: se a pergunta contém 'tempo_entrega' e 'clima'
-        if "tempo_entrega" in pergunta and "clima" in pergunta and \
-           "barra" in pergunta.lower():
-            fig, ax = plt.subplots()
-            df.groupby("clima")["tempo_entrega"].mean().plot(kind="bar", ax=ax)
-            ax.set_title("Média de tempo de entrega por clima")
-            ax.set_ylabel("Tempo de entrega (médio)")
-            st.pyplot(fig)
-            return "Gráfico gerado: média de tempo_entrega por clima."
+        Implementação simples e específica para o curso:
 
-        # Caso contrário, apenas informa que não entendeu
+        - Se a pergunta mencionar 'tempo_entrega' e 'clima',
+          gera um gráfico de barras da média de tempo_entrega por clima,
+          ordenando do menor valor para o maior.
+
+        Caso contrário, retorna uma mensagem de orientação.
+        """
+
+        if "tempo_entrega" in pergunta and "clima" in pergunta:
+            if "tempo_entrega" not in df.columns or "clima" not in df.columns:
+                return (
+                    "Não encontrei as colunas 'tempo_entrega' e 'clima' no DataFrame. "
+                    "Verifique os nomes das colunas."
+                )
+
+            try:
+                medias = (
+                    df.groupby("clima")["tempo_entrega"]
+                    .mean()
+                    .sort_values(ascending=True)
+                )
+
+                fig, ax = plt.subplots()
+                medias.plot(kind="bar", ax=ax)
+                ax.set_title("Média de tempo_entrega por clima")
+                ax.set_ylabel("tempo_entrega (médio)")
+                ax.set_xlabel("clima")
+                st.pyplot(fig)
+
+                return (
+                    "Gráfico gerado: média de tempo_entrega por clima, "
+                    "ordenada do menor valor para o maior."
+                )
+            except Exception as e:
+                return f"Não consegui gerar o gráfico por causa do erro: {e}"
+
         return (
-            "Ainda não consigo interpretar essa solicitação de gráfico automaticamente. "
-            "Tente algo como: 'Gráfico de barras de tempo_entrega por clima'."
+            "Ainda não sei montar esse tipo de gráfico automaticamente. "
+            "Tente algo como: 'Crie um gráfico da média de tempo_entrega por clima.'"
         )
 
     ferramenta_gerar_grafico = Tool(
@@ -177,21 +172,22 @@ Não invente medidas que não estejam na tabela.
         func=_gerar_grafico,
         description=(
             "Gera gráficos simples com base na pergunta do usuário. "
-            "Exemplo suportado: 'Gráfico de barras de tempo_entrega por clima'."
+            "Exemplo suportado: 'Gráfico da média de tempo_entrega por clima'."
         ),
     )
 
-    # =========================
-    # 3.4 – Ferramenta: Execução de código Python seguro
-    # =========================
+    # ======================================================
+    # 4) Ferramenta: Execução de códigos Python
+    # ======================================================
     ferramenta_codigos_python = PythonAstREPLTool(
         name="Códigos Python",
         description=(
             "Execute código Python sobre o DataFrame df já carregado. "
-            "Use esta ferramenta apenas quando precisar de cálculos específicos. "
+            "Use esta ferramenta para cálculos específicos, por exemplo: "
+            "df.groupby('clima')['tempo_entrega'].mean(). "
             "Não envie perguntas em linguagem natural; envie diretamente o código."
         ),
-        locals={"df": df},
+        locals={"df": df, "pd": pd},
         handle_tool_error=True,
     )
 

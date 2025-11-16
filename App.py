@@ -1,10 +1,12 @@
-import streamlit as st
-import pandas as pd
 import os
 
+import pandas as pd
+import streamlit as st
+from dotenv import load_dotenv
+
 from langchain_groq import ChatGroq
-from langchain.prompts import PromptTemplate
-from langchain.agents import create_react_agent, AgentExecutor
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import AgentExecutor, create_tool_calling_agent
 
 from ferramentas import criar_ferramentas
 
@@ -15,11 +17,13 @@ from ferramentas import criar_ferramentas
 st.set_page_config(page_title="Assistente de análise de dados com IA", layout="centered")
 st.title("🦜 Assistente de análise de dados com IA")
 
-st.info("""
+st.info(
+    """
 Este assistente utiliza um agente, criado com LangChain, para te ajudar a explorar,
 analisar e visualizar dados de forma interativa. Carregue um arquivo CSV, gere relatórios
 rápidos ou faça perguntas livres para o agente.
-""")
+"""
+)
 
 
 # =====================================================
@@ -46,8 +50,10 @@ st.dataframe(df.head())
 
 
 # =====================================================
-# LLM (mantido aqui como no curso)
+# LLM (mantido no App, como no curso)
 # =====================================================
+load_dotenv()
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", None)
 if not GROQ_API_KEY and "GROQ_API_KEY" in st.secrets:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
@@ -58,88 +64,59 @@ if not GROQ_API_KEY:
 
 llm = ChatGroq(
     api_key=GROQ_API_KEY,
-    model_name="llama-3.1-8b-instant",  # modelo menor e mais barato
+    model_name="llama-3.1-8b-instant",
     max_tokens=512,
     temperature=0,
 )
 
 
 # =====================================================
-# Ferramentas (ligadas ao df)
+# Ferramentas (ligadas ao df e ao LLM)
 # =====================================================
-tools = criar_ferramentas(df)
-
-# Dicionário para acesso direto às ferramentas por nome
+tools = criar_ferramentas(df, llm)
 tools_by_name = {t.name: t for t in tools}
 
 
 # =====================================================
-# Agente ReAct (usado para perguntas livres e gráficos)
+# Agente (tool-calling) para perguntas livres e gráficos
 # =====================================================
-
-# Para não pesar o prompt, usamos pequena amostra (5 linhas x 10 colunas)
 df_sample = df.iloc[:5, : min(df.shape[1], 10)]
 df_head = df_sample.to_markdown(index=False)
 
-prompt_react_pt = PromptTemplate(
-    input_variables=["input", "agent_scratchpad", "tools", "tool_names"],
-    partial_variables={"df_head": df_head},
-    template="""
-Você é um assistente que SEMPRE responde em português, de forma clara e objetiva.
+prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+Você é um assistente de análise de dados que SEMPRE responde em português, de forma clara e objetiva.
 
 Você tem acesso a um DataFrame pandas chamado `df`.
-Aqui estão as primeiras linhas (amostra):
+Abaixo está uma amostra dos dados:
 
 {df_head}
 
-Você tem acesso às seguintes ferramentas:
+Você também tem acesso às seguintes FERRAMENTAS:
+- "Informações DataFrame": relatório geral dos dados.
+- "Resumo Estatístico": interpretação das estatísticas descritivas.
+- "Gerar Gráfico": geração de gráficos simples (ex.: tempo_entrega por clima).
+- "Códigos Python": execução de código Python sobre o df (df, pd disponíveis).
 
-{tools}
+Regras importantes:
+- Use "Informações DataFrame" para relatórios gerais.
+- Use "Resumo Estatístico" para estatísticas descritivas.
+- Use "Gerar Gráfico" para pedidos explícitos de gráficos.
+- Use "Códigos Python" apenas para cálculos específicos, enviando código direto.
+- NÃO chame ferramentas desnecessariamente.
+- Responda de forma direta e didática.
+""",
+        ),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ]
+).partial(df_head=df_head)
 
-Regras IMPORTANTES:
-- Para RELATÓRIO GERAL prefira a ferramenta "Informações DataFrame".
-- Para ESTATÍSTICAS DESCRITIVAS prefira a ferramenta "Resumo Estatístico".
-- Para GRÁFICOS use a ferramenta "Gerar Gráfico".
-- Para CÁLCULOS ESPECÍFICOS em Python use "Códigos Python", enviando código direto.
-- NÃO chame a mesma ferramenta mais de uma vez na mesma pergunta.
-- NÃO entre em loops chamando a mesma ação repetidamente.
-- Responda SEMPRE em português.
-
-Use SEMPRE o seguinte formato:
-
-Thought: (seu raciocínio sobre o que fazer; NÃO inclua código aqui)
-Action: (o nome exato de uma das ferramentas: {tool_names})
-Action Input: (o input da ferramenta, em texto simples ou código Python quando for o caso)
-
-... (este ciclo se repete até você ter informações suficientes)
-
-Quando tiver a resposta final, use o formato:
-
-Final Answer: (sua resposta final ao usuário, em português, sem mostrar o raciocínio interno)
-
-Histórico de raciocínio e uso de ferramentas até agora:
-{agent_scratchpad}
-
-Lembre-se: seja objetivo, não repita a mesma ferramenta várias vezes, e não invente colunas que não existem.
-Pergunta do usuário: {input}
-"""
-)
-
-
-agente = create_react_agent(
-    llm=llm,
-    tools=tools,
-    prompt=prompt_react_pt,
-)
-
-orquestrador = AgentExecutor(
-    agent=agente,
-    tools=tools,
-    verbose=True,                 # log no terminal (não aparece para o usuário)
-    handle_parsing_errors=True,   # tenta se recuperar de erros de parsing
-    max_iterations=6,             # limite de passos para evitar loops
-    early_stopping_method="force" # força resposta final se bater o limite
-)
+agent = create_tool_calling_agent(llm, tools, prompt)
+orquestrador = AgentExecutor(agent=agent, tools=tools, verbose=True)
 
 
 # =====================================================
@@ -158,7 +135,6 @@ if st.button("📄 Relatório de informações gerais", key="botao_relatorio_ger
             texto_relatorio = ferramenta_info.run("Quero um relatório com informações sobre os dados.")
             st.session_state["relatorio_geral"] = texto_relatorio
 
-# Exibe o relatório com botão de download
 if "relatorio_geral" in st.session_state:
     with st.expander("Resultado: Relatório de informações gerais"):
         st.markdown(st.session_state["relatorio_geral"])
@@ -179,7 +155,6 @@ if st.button("📄 Relatório de estatísticas descritivas", key="botao_relatori
             texto_est = ferramenta_est.run("Quero um relatório de estatísticas descritivas.")
             st.session_state["relatorio_estatisticas"] = texto_est
 
-# Exibe o relatório salvo com opção de download
 if "relatorio_estatisticas" in st.session_state:
     with st.expander("Resultado: Relatório de estatísticas descritivas"):
         st.markdown(st.session_state["relatorio_estatisticas"])

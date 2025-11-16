@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+from pandas.errors import ParserError
 from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from langchain.agents import create_react_agent
@@ -29,13 +30,45 @@ Ideal para analistas, cientistas de dados e equipes que buscam agilidade e insig
 
 # Upload do CSV
 st.markdown("### 📁 Faça upload do seu arquivo CSV")
-arquivo_carregado = st.file_uploader("Selecione um arquivo CSV", type="csv", label_visibility="collapsed")
+arquivo_carregado = st.file_uploader("Faça upload de um arquivo CSV", type="csv")
 
-if arquivo_carregado:
-    df = pd.read_csv(arquivo_carregado)
-    st.success("Arquivo carregado com sucesso!")
-    st.markdown("### 🔍 Primeiras linhas do DataFrame")
-    st.dataframe(df.head())
+df = None  # inicializa
+
+if arquivo_carregado is not None:
+    try:
+        # Tentativa mais robusta:
+        # - sep=None + engine="python" -> pandas tenta detectar o separador
+        # - on_bad_lines="skip" -> pula linhas quebradas ao invés de lançar erro
+        df = pd.read_csv(
+            arquivo_carregado,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip"
+        )
+    except ParserError as e:
+        st.error("Não foi possível ler o arquivo CSV (erro de formatação). "
+                 "Verifique se o arquivo está bem formatado ou tente limpar linhas problemáticas.")
+        st.text(f"Detalhes técnicos: {e}")
+        st.stop()
+    except UnicodeDecodeError as e:
+        # Caso seja um CSV em latin1 (muito comum em arquivos do SUS / sistemas legados)
+        arquivo_carregado.seek(0)
+        try:
+            df = pd.read_csv(
+                arquivo_carregado,
+                sep=None,
+                engine="python",
+                on_bad_lines="skip",
+                encoding="latin1"
+            )
+        except Exception as e2:
+            st.error("Erro ao tentar ler o arquivo com encoding latin1.")
+            st.text(f"Detalhes técnicos: {e2}")
+            st.stop()
+
+    if df is not None:
+        st.success(f"Arquivo carregado com sucesso! Formato: {df.shape[0]} linhas x {df.shape[1]} colunas")
+        st.dataframe(df.head())
 
     # LLM
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -153,6 +186,7 @@ if arquivo_carregado:
     if st.button("Gerar gráfico", key="gerar_grafico"):
         with st.spinner("Gerando o gráfico 🦜"):
             orquestrador.invoke({"input": pergunta_grafico})
+
 
 
 

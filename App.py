@@ -117,10 +117,14 @@ Quando tiver a resposta final, use o formato:
 
 Final Answer: (sua resposta final ao usuário, em português, sem mostrar o raciocínio interno)
 
+Histórico de raciocínio e uso de ferramentas até agora:
+{agent_scratchpad}
+
 Lembre-se: seja objetivo, não repita a mesma ferramenta várias vezes, e não invente colunas que não existem.
 Pergunta do usuário: {input}
 """
 )
+
 
 agente = create_react_agent(
     llm=llm,

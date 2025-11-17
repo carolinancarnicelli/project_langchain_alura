@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain.tools import tool
@@ -8,9 +9,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
-import re
 from langchain.agents import Tool
 from langchain_experimental.tools import PythonAstREPLTool
+
 
 # Obtenção da chave de api
 load_dotenv()
@@ -93,25 +94,22 @@ def informacoes_dataframe(pergunta: str, df: pd.DataFrame) -> str:
 @tool
 def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
     """
-    Utilize esta ferramenta sempre que o usuário solicitar um resumo estatístico completo e descritivo da base de dados,
-    incluindo várias estatísticas (média, desvio padrão, mínimo, máximo etc.).
-    Não utilize esta ferramenta para calcular uma única métrica ...como 'qual é a média de X' ou 'qual a correlação das variáveis'.
+    Gera um relatório textual com base em estatísticas descritivas
+    das colunas numéricas do DataFrame.
     """
 
     # 1) Colunas que já são numéricas
     df_num = df.select_dtypes(include="number")
 
-    # 2) Tentar converter automaticamente colunas que parecem numéricas (números como texto)
+    # 2) Tentar converter automaticamente colunas numéricas que estejam como texto
     possiveis_numericas = {}
 
     for col in df.columns:
-        # pula colunas já numéricas
         if col in df_num.columns:
             continue
 
         serie_original = df[col]
 
-        # normaliza: remove espaços, separador de milhar, troca vírgula por ponto
         serie = (
             serie_original.astype(str)
             .str.strip()
@@ -121,11 +119,10 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
 
         conv = pd.to_numeric(serie, errors="coerce")
 
-        # qualquer coluna com pelo menos 1 valor numérico entra
+        # entra se tiver ao menos 1 valor numérico
         if conv.notna().sum() > 0:
             possiveis_numericas[col] = conv
 
-    # Se encontramos colunas convertidas, adiciona ao df_num
     if possiveis_numericas:
         df_convertidas = pd.DataFrame(possiveis_numericas)
         if not df_num.empty:
@@ -133,7 +130,7 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
         else:
             df_num = df_convertidas
 
-    # 3) Se ainda assim não tiver colunas numéricas, devolve mensagem amigável
+    # 3) Se ainda não tiver colunas numéricas, retorna mensagem amigável
     if df_num.empty:
         return (
             "Não foi possível gerar estatísticas descritivas numéricas, "
@@ -142,7 +139,7 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
             "ou se vêm como texto com vírgula, ponto etc."
         )
 
-    # 4) Gera o describe com segurança (e ainda captura qualquer ValueError residual)
+    # 4) Gera o describe com segurança
     try:
         estatisticas_descritivas = df_num.describe().transpose().to_string()
     except ValueError as e:
@@ -152,7 +149,7 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
             "dados numéricos suficientes após o tratamento."
         )
 
-    # 5) Prompt de resposta (mantém o mesmo template da aula)
+    # 5) Prompt de resposta (igual à aula)
     template_resposta = PromptTemplate(
         template="""
         Você é um analista de dados encarregado de interpretar resultados estatísticos de uma base de dados
@@ -180,96 +177,171 @@ def resumo_estatistico(pergunta: str, df: pd.DataFrame) -> str:
 
     cadeia = template_resposta | llm | StrOutputParser()
     resposta = cadeia.invoke(
-        {
-            "pergunta": pergunta,
-            "resumo": estatisticas_descritivas,
-        }
+        {"pergunta": pergunta, "resumo": estatisticas_descritivas}
     )
 
     return resposta
 
 
-# Gerador de gráficos 
+# Ferramenta genérica para criação de gráficos
 @tool
 def gerar_grafico(pergunta: str, df: pd.DataFrame) -> str:
     """
-    Utilize esta ferramenta sempre que o usuário solicitar um gráfico a partir de um DataFrame pandas (`df`) com base em uma instrução do usuário.
-    A instrução pode conter pedidos como: 'Crie um gráfico da média de tempo de entrega por clima','Plote a distribuição do tempo de entrega'"
-    ou "Plote a relação entre a classifição dos agentes e o tempo de entrega. Palavras-chave comuns que indicam o uso desta ferramenta incluem:
-    'crie um gráfico', 'plote', 'visualize', 'faça um gráfico de', 'mostre a distribuição', 'represente graficamente', entre outros."""
+    Gera gráficos a partir do DataFrame `df` com base em uma pergunta em linguagem natural.
+    O LLM é usado apenas para escolher colunas/medida/tipo de gráfico.
+    O agrupamento e o plot são feitos 100% em Python, usando o df completo.
+    """
 
- # Captura informações sobre o dataframe
-    colunas_info = "\n".join([f"- {col} ({dtype})" for col, dtype in df.dtypes.items()])
-    amostra_dados = df.head(3).to_dict(orient='records')
+    # 1) Monta string com nomes de colunas
+    colunas_lista = list(df.columns)
+    colunas_str = "\n".join(f"- {c}" for c in colunas_lista)
 
-  # Template otimizado para geração de código de gráficos
-    template_resposta = PromptTemplate(
-            template="""
-            Você é um especialista em visualização de dados. Sua tarefa é gerar **apenas o código Python** para plotar um gráfico com base na solicitação do usuário.
+    # 2) Prompt para o modelo devolver apenas JSON com a configuração do gráfico
+    prompt_cfg = PromptTemplate(
+        template="""
+        Você recebe uma pergunta do usuário sobre um gráfico que deve ser feito
+        a partir de um DataFrame pandas chamado `df`.
 
-            ## Solicitação do usuário:
-            "{pergunta}"
+        O DataFrame possui as seguintes colunas:
+        {colunas}
 
-            ## Metadados do DataFrame:
-            {colunas}
+        Pergunta do usuário:
+        "{pergunta}"
 
-            ## Amostra dos dados (3 primeiras linhas):
-            {amostra}
+        Sua tarefa é escolher:
+        - qual coluna será usada no eixo X (`x_col`);
+        - qual coluna será usada no eixo Y (`y_col`), se houver;
+        - qual agregação usar (`agg`): "sum", "mean", "count" ou "none";
+        - qual tipo de gráfico é mais adequado (`chart_type`): "bar", "line", "scatter", "hist";
+        - opcionalmente, quantas categorias máximas mostrar (`top_n`), por exemplo 20.
 
-            ## Instruções obrigatórias:
-            1. Use as bibliotecas `matplotlib.pyplot` (como `plt`) e `seaborn` (como `sns`).
-            2. Defina o tema com `sns.set_theme()`
-            3. Certifique-se de que todas as colunas mencionadas na solicitação existem no DataFrame chamado `df`.
-            4. Escolha o tipo de gráfico adequado conforme a análise solicitada:
-            - **Distribuição de variáveis numéricas**: `histplot`, `kdeplot`, `boxplot` ou `violinplot`
-            - **Distribuição de variáveis categóricas**: `countplot` 
-            - **Comparação entre categorias**: `barplot`
-            - **Relação entre variáveis**: `scatterplot` ou `lineplot`
-            - **Séries temporais**: `lineplot`, com o eixo X formatado como datas
-            5. Configure o tamanho do gráfico com `figsize=(8, 4)`.
-            6. Adicione título e rótulos (`labels`) apropriados aos eixos.
-            7. Posicione o título à esquerda com `loc='left'`, deixe o `pad=20` e use `fontsize=14`.
-            8. Mantenha os ticks eixo X sem rotação com `plt.xticks(rotation=0)`
-            9. Remova as bordas superior e direita do gráfico com `sns.despine()`.
-            10. Finalize o código com `plt.show()`.
-            11. Plote sempre o conjunto completo dos dados agregados. Não restrinja a visualização a um subconjunto de dados (usando .head(), .tail(), .sample() ou fatiamento [:N]).
+        Restrições IMPORTANTES:
+        - Escolha apenas nomes de colunas que existam na lista fornecida.
+        - Se a pergunta falar "soma de X por Y", use `agg = "sum"`, `y_col = X` e `x_col = Y`.
+        - Se a pergunta falar "contagem de registros por X", use `agg = "count"` e deixe `y_col = null`.
+        - Se não ficar claro, escolha um padrão razoável (por exemplo, count por uma coluna categórica).
 
-            Retorne APENAS o código Python, sem nenhum texto adicional ou explicação.
+        Responda APENAS com um JSON válido, sem texto extra, no formato:
 
-            Código Python:
-            """, input_variables=["pergunta", "colunas", "amostra"]
+        {{
+          "x_col": "...",
+          "y_col": "... ou null",
+          "agg": "sum|mean|count|none",
+          "chart_type": "bar|line|scatter|hist",
+          "top_n": 20
+        }}
+        """,
+        input_variables=["pergunta", "colunas"],
+    )
+
+    cadeia_cfg = prompt_cfg | llm | StrOutputParser()
+    cfg_str = cadeia_cfg.invoke({"pergunta": pergunta, "colunas": colunas_str})
+
+    try:
+        cfg = json.loads(cfg_str)
+    except json.JSONDecodeError:
+        st.error("Não consegui interpretar a configuração de gráfico retornada pelo modelo.")
+        st.text(cfg_str)
+        return ""
+
+    x_col = cfg.get("x_col")
+    y_col = cfg.get("y_col")
+    agg = (cfg.get("agg") or "sum").lower()
+    chart_type = (cfg.get("chart_type") or "bar").lower()
+    top_n = cfg.get("top_n")
+
+    # 3) Validação básica das colunas
+    if x_col not in df.columns:
+        st.error(f"Coluna para eixo X não encontrada no DataFrame: {x_col}")
+        return ""
+
+    if y_col is not None and y_col not in df.columns:
+        st.error(f"Coluna para eixo Y não encontrada no DataFrame: {y_col}")
+        return ""
+
+    # 4) Preparar dados agregados
+    df_plot = df.copy()
+
+    # Se for soma/média, tentar garantir que y_col seja numérica
+    if y_col is not None and agg in ["sum", "mean"]:
+        serie = (
+            df_plot[y_col]
+            .astype(str)
+            .str.strip()
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
         )
+        df_plot[y_col] = pd.to_numeric(serie, errors="coerce")
 
-        # Gera o código
-    cadeia = template_resposta | llm | StrOutputParser()
-    codigo_bruto = cadeia.invoke({
-            "pergunta": pergunta,
-            "colunas": colunas_info,
-            "amostra": amostra_dados
-        })
+    if agg in ["sum", "mean"] and y_col is not None:
+        dados = (
+            df_plot.groupby(x_col)[y_col]
+            .agg(agg)
+            .sort_values(ascending=False)
+        )
+    elif agg == "count":
+        # contagem de linhas por categoria de x_col
+        dados = df_plot.groupby(x_col).size().sort_values(ascending=False)
+    else:
+        # sem agregação: usa a coluna original (ex. hist de uma coluna numérica)
+        dados = None
 
-        # Limpa o código gerado
-    #codigo_limpo = codigo_bruto.replace("```python", "").replace("```", "").strip()
-    codigo_limpo = codigo_bruto.replace("```python", "").replace("```", "").strip()
+    # Se houver agregação, opcionalmente limita Top N
+    if dados is not None and isinstance(top_n, int) and top_n > 0:
+        dados = dados.head(top_n)
 
-    # Remover limitações de amostra que o modelo possa ter colocado
-    # (head, tail, sample, fatiamento [:N])
-    codigo_limpo = re.sub(r"\.head\s*\(\s*\d*\s*\)", "", codigo_limpo)
-    codigo_limpo = re.sub(r"\.tail\s*\(\s*\d*\s*\)", "", codigo_limpo)
-    codigo_limpo = re.sub(r"\.sample\s*\([^)]*\)", "", codigo_limpo)
-    codigo_limpo = re.sub(r"\[\s*:\s*\d+\s*\]", "", codigo_limpo)
+    # 5) Plotar com seaborn/matplotlib
+    plt.figure(figsize=(14, 6))
+    sns.set_theme()
 
+    if dados is not None:
+        # temos série agregada (index = categorias, values = métrica)
+        x_vals = dados.index
+        y_vals = dados.values
 
-        # Tenta executar o código para validação
-    exec_globals = {'df': df, 'plt': plt, 'sns': sns}
-    exec_locals = {}
-    exec(codigo_limpo, exec_globals, exec_locals)
+        if chart_type in ["bar", "barplot"]:
+            sns.barplot(x=x_vals, y=y_vals)
+        elif chart_type in ["line", "lineplot"]:
+            sns.lineplot(x=x_vals, y=y_vals, marker="o")
+        else:
+            # fallback para barplot
+            sns.barplot(x=x_vals, y=y_vals)
 
-        # Mostra o gráfico 
-    fig = plt.gcf()
-    st.pyplot(fig)
-        
-    return "" 
+        plt.xlabel(x_col)
+        if y_col is not None:
+            plt.ylabel(f"{agg} de {y_col}")
+        else:
+            plt.ylabel("Contagem de registros")
+
+    else:
+        # caso sem agregação (por ex. hist de uma coluna numérica)
+        if y_col is None:
+            st.error("Configuração de gráfico inválida: agg='none' mas 'y_col' não foi definida.")
+            return ""
+
+        serie = (
+            df_plot[y_col]
+            .astype(str)
+            .str.strip()
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+        valores = pd.to_numeric(serie, errors="coerce").dropna()
+
+        if chart_type in ["hist", "histplot"]:
+            sns.histplot(valores, bins=30, kde=True)
+        else:
+            sns.histplot(valores, bins=30, kde=True)
+
+        plt.xlabel(y_col)
+        plt.ylabel("Frequência")
+
+    plt.title(pergunta, loc="left", pad=20, fontsize=14)
+    plt.xticks(rotation=90)
+    sns.despine()
+
+    st.pyplot(plt.gcf())
+    return ""
 
 # Função para criar ferramentas 
 def criar_ferramentas(df):
@@ -313,6 +385,7 @@ def criar_ferramentas(df):
         ferramenta_codigos_python
 
     ]
+
 
 
 

@@ -146,7 +146,7 @@ if arquivo_carregado is not None:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     llm = ChatGroq(
     api_key=GROQ_API_KEY,
-    model_name="llama-3.3-70b-versatile",  # modelo atual da Groq
+    model_name="llama-3.1-8b-instant",  # modelo atual da Groq
     temperature=0
 )
 
@@ -198,7 +198,8 @@ if arquivo_carregado is not None:
     orquestrador = AgentExecutor(agent=agente,
                                 tools=tools,
                                 verbose=True,
-                                handle_parsing_errors=True)
+                                handle_parsing_errors=True,
+                                max_iterations=4)
 
     # AÇÕES RÁPIDAS
     st.markdown("---")
@@ -307,6 +308,7 @@ if st.button("Gerar gráfico", key="gerar_grafico"):
             except Exception as e:
                 st.error("Ocorreu um erro ao gerar o gráfico.")
                 st.text(str(e))
+
 
 
 

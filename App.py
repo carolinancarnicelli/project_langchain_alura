@@ -248,7 +248,6 @@ if arquivo_carregado is not None:
                 st.error("Ocorreu um erro ao gerar o relatório de estatísticas descritivas.")
                 st.text(str(e))
 
-
     # Exibe o relatório salvo com opção de download
     if 'relatorio_estatisticas' in st.session_state:
         with st.expander("Resultado: Relatório de estatísticas descritivas"):
@@ -258,62 +257,59 @@ if arquivo_carregado is not None:
                 label="📥 Baixar relatório",
                 data=st.session_state['relatorio_estatisticas'],
                 file_name="relatorio_estatisticas_descritivas.md",
-                mime="text/markdown"  
+                mime="text/markdown"
             )
-   
-   # PERGUNTA SOBRE OS DADOS
+
+    # PERGUNTAS SOBRE OS DADOS
     st.markdown("---")
-st.markdown("## 🔎 Perguntas sobre os dados")
-pergunta_sobre_dados = st.text_input("Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?')")
+    st.markdown("## 🔎 Perguntas sobre os dados")
 
-if st.button("Responder pergunta", key="responder_pergunta_dados"):
-    if not pergunta_sobre_dados.strip():
-        st.warning("Digite uma pergunta antes de clicar em responder.")
-    else:
-        with st.spinner("Analisando os dados 🦜"):
-            try:
-                resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
-                st.markdown(resposta["output"])
-            except groq.RateLimitError:
-                st.error(
-                    "A API da Groq retornou erro de limite de requisições (Rate Limit). "
-                    "Tente novamente em alguns instantes."
-                )
-            except Exception as e:
-                st.error("Ocorreu um erro ao responder sua pergunta sobre os dados.")
-                st.text(str(e))
+    pergunta_sobre_dados = st.text_input(
+        "Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?')",
+        key="pergunta_dados"
+    )
 
-
+    if st.button("Responder pergunta", key="responder_pergunta_dados"):
+        if not pergunta_sobre_dados.strip():
+            st.warning("Digite uma pergunta antes de clicar em responder.")
+        else:
+            with st.spinner("Analisando os dados 🦜"):
+                try:
+                    resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
+                    st.markdown(resposta["output"])
+                except groq.RateLimitError:
+                    st.error(
+                        "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                        "Tente novamente em alguns instantes."
+                    )
+                except Exception as e:
+                    st.error("Ocorreu um erro ao responder sua pergunta sobre os dados.")
+                    st.text(str(e))
 
     # GERAÇÃO DE GRÁFICOS
     st.markdown("---")
     st.markdown("## 📊 Criar gráfico com base em uma pergunta")
 
     pergunta_grafico = st.text_input(
-    "Digite o que deseja visualizar (ex.: 'Crie um gráfico da média de tempo de entrega por clima.')"
-)
+        "Digite o que deseja visualizar (ex.: 'Crie um gráfico da média de tempo de entrega por clima.')",
+        key="pergunta_grafico"
+    )
 
-if st.button("Gerar gráfico", key="gerar_grafico"):
-    if not pergunta_grafico.strip():
-        st.warning("Digite uma instrução antes de gerar o gráfico.")
-    else:
-        with st.spinner("Gerando o gráfico 🦜"):
-            try:
-                orquestrador.invoke({"input": pergunta_grafico})
-            except groq.RateLimitError:
-                st.error(
-                    "A API da Groq retornou erro de limite de requisições (Rate Limit). "
-                    "Tente novamente em alguns instantes."
-                )
-            except Exception as e:
-                st.error("Ocorreu um erro ao gerar o gráfico.")
-                st.text(str(e))
-
-
-
-
-
-
+    if st.button("Gerar gráfico", key="gerar_grafico"):
+        if not pergunta_grafico.strip():
+            st.warning("Digite uma instrução antes de gerar o gráfico.")
+        else:
+            with st.spinner("Gerando o gráfico 🦜"):
+                try:
+                    orquestrador.invoke({"input": pergunta_grafico})
+                except groq.RateLimitError:
+                    st.error(
+                        "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                        "Tente novamente em alguns instantes."
+                    )
+                except Exception as e:
+                    st.error("Ocorreu um erro ao gerar o gráfico.")
+                    st.text(str(e))
 
 
 

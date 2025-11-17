@@ -7,6 +7,7 @@ from langchain.prompts import PromptTemplate
 from langchain.agents import create_react_agent
 from langchain.agents import AgentExecutor
 from ferramentas import criar_ferramentas
+import groq
 
 # Função para detectar a linha de cabeçalho
 def detectar_linha_cabecalho(df_raw: pd.DataFrame, max_linhas: int = 50) -> int:
@@ -205,9 +206,19 @@ if arquivo_carregado is not None:
 
     # Relatório de informações gerais
     if st.button("📄 Relatório de informações gerais", key="botao_relatorio_geral"):
-        with st.spinner("Gerando relatório 🦜"):
+    with st.spinner("Gerando relatório 🦜"):
+        try:
             resposta = orquestrador.invoke({"input": "Quero um relatório com informações sobre os dados"})
             st.session_state['relatorio_geral'] = resposta["output"]
+        except groq.RateLimitError:
+            st.error(
+                "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                "Tente novamente em alguns instantes."
+            )
+        except Exception as e:
+            st.error("Ocorreu um erro ao gerar o relatório de informações gerais.")
+            st.text(str(e))
+
 
     # Exibe o relatório com botão de download
     if 'relatorio_geral' in st.session_state:
@@ -223,9 +234,19 @@ if arquivo_carregado is not None:
 
     # Relatório de estatísticas descritivas
     if st.button("📄 Relatório de estatísticas descritivas", key="botao_relatorio_estatisticas"):
-        with st.spinner("Gerando relatório 🦜"):
+    with st.spinner("Gerando relatório 🦜"):
+        try:
             resposta = orquestrador.invoke({"input": "Quero um relatório de estatísticas descritivas"})
             st.session_state['relatorio_estatisticas'] = resposta["output"]
+        except groq.RateLimitError:
+            st.error(
+                "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                "Tente novamente em alguns instantes."
+            )
+        except Exception as e:
+            st.error("Ocorreu um erro ao gerar o relatório de estatísticas descritivas.")
+            st.text(str(e))
+
 
     # Exibe o relatório salvo com opção de download
     if 'relatorio_estatisticas' in st.session_state:
@@ -241,22 +262,53 @@ if arquivo_carregado is not None:
    
    # PERGUNTA SOBRE OS DADOS
     st.markdown("---")
-    st.markdown("## 🔎 Perguntas sobre os dados")
-    pergunta_sobre_dados = st.text_input("Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?')")
-    if st.button("Responder pergunta", key="responder_pergunta_dados"):
+st.markdown("## 🔎 Perguntas sobre os dados")
+pergunta_sobre_dados = st.text_input("Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?')")
+
+if st.button("Responder pergunta", key="responder_pergunta_dados"):
+    if not pergunta_sobre_dados.strip():
+        st.warning("Digite uma pergunta antes de clicar em responder.")
+    else:
         with st.spinner("Analisando os dados 🦜"):
-            resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
-            st.markdown((resposta["output"]))
+            try:
+                resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
+                st.markdown(resposta["output"])
+            except groq.RateLimitError:
+                st.error(
+                    "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                    "Tente novamente em alguns instantes."
+                )
+            except Exception as e:
+                st.error("Ocorreu um erro ao responder sua pergunta sobre os dados.")
+                st.text(str(e))
+
 
 
     # GERAÇÃO DE GRÁFICOS
     st.markdown("---")
     st.markdown("## 📊 Criar gráfico com base em uma pergunta")
 
-    pergunta_grafico = st.text_input("Digite o que deseja visualizar (ex: 'Crie um gráfico da média de tempo de entrega por clima.')")
-    if st.button("Gerar gráfico", key="gerar_grafico"):
+    pergunta_grafico = st.text_input(
+    "Digite o que deseja visualizar (ex.: 'Crie um gráfico da média de tempo de entrega por clima.')"
+)
+
+if st.button("Gerar gráfico", key="gerar_grafico"):
+    if not pergunta_grafico.strip():
+        st.warning("Digite uma instrução antes de gerar o gráfico.")
+    else:
         with st.spinner("Gerando o gráfico 🦜"):
-            orquestrador.invoke({"input": pergunta_grafico})
+            try:
+                orquestrador.invoke({"input": pergunta_grafico})
+            except groq.RateLimitError:
+                st.error(
+                    "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                    "Tente novamente em alguns instantes."
+                )
+            except Exception as e:
+                st.error("Ocorreu um erro ao gerar o gráfico.")
+                st.text(str(e))
+
+
 
 
 

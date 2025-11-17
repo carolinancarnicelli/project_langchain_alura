@@ -207,18 +207,18 @@ if arquivo_carregado is not None:
 
     # Relatório de informações gerais
     if st.button("📄 Relatório de informações gerais", key="botao_relatorio_geral"):
-    with st.spinner("Gerando relatório 🦜"):
-        try:
-            resposta = orquestrador.invoke({"input": "Quero um relatório com informações sobre os dados"})
-            st.session_state['relatorio_geral'] = resposta["output"]
-        except groq.RateLimitError:
-            st.error(
-                "A API da Groq retornou erro de limite de requisições (Rate Limit). "
-                "Tente novamente em alguns instantes."
-            )
-        except Exception as e:
-            st.error("Ocorreu um erro ao gerar o relatório de informações gerais.")
-            st.text(str(e))
+        with st.spinner("Gerando relatório 🦜"):
+            try:
+                resposta = orquestrador.invoke({"input": "Quero um relatório com informações sobre os dados"})
+                st.session_state['relatorio_geral'] = resposta["output"]
+            except groq.RateLimitError:
+                st.error(
+                    "A API da Groq retornou erro de limite de requisições (Rate Limit). "
+                    "Tente novamente em alguns instantes."
+                )
+            except Exception as e:
+                st.error("Ocorreu um erro ao gerar o relatório de informações gerais.")
+                st.text(str(e))
 
 
     # Exibe o relatório com botão de download
@@ -308,6 +308,7 @@ if st.button("Gerar gráfico", key="gerar_grafico"):
             except Exception as e:
                 st.error("Ocorreu um erro ao gerar o gráfico.")
                 st.text(str(e))
+
 
 
 

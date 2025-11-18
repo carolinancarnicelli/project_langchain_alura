@@ -207,16 +207,6 @@ df.groupby("clima")["tempo_entrega"].mean()
 
 ---
 
-# 🌟 Melhorias Futuras
-
-* Adicionar cache inteligente com `st.cache_data`
-* Suporte a múltiplos arquivos simultâneos
-* Exportação automática de relatórios PDF/Excel
-* Histórico de consultas
-* Modo batch para pipelines de ETL
-
----
-
 # 📜 Licença
 
 Este projeto está sob a licença MIT – livre para uso e modificação.
